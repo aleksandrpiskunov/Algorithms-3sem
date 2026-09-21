@@ -40,3 +40,28 @@ def generate_card(
     full_number = number_without_check + str(check_digit)
     return full_number
 
+
+class CardRegistry:
+    def __init__(self, max_repeats: int = 5, reuse_probability: float = 0.3):
+        self.max_repeats = max_repeats
+        self.reuse_probability = reuse_probability
+        self._usage: dict[str, int] = {}
+ 
+    def _reusable_cards(self) -> list[str]:
+        return [num for num, count in self._usage.items() if count < self.max_repeats]
+ 
+    def get_card(self, banks_list, banks_probability, BANKS, CARD_LENGTH) -> str:
+        reusable = self._reusable_cards()
+        if reusable and random.random() < self.reuse_probability:
+            card_number = random.choice(reusable)
+            self._usage[card_number] += 1
+            return card_number
+
+        while True:
+            new_card = generate_card(banks_list, banks_probability, BANKS, CARD_LENGTH)
+            if new_card not in self._usage:
+                self._usage[new_card] = 1
+                return new_card
+
+
+            
