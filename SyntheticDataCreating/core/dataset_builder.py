@@ -12,11 +12,11 @@ def build_receipt(stores, banks_list, banks_probability, BANKS, categories, bran
     purchase_datetime = generate_datetime(stores)
 
     card = card_registry.get_card(banks_list, banks_probability, BANKS, CARD_LENGTH)
-    num_items = random.randint(2, 5)
+    num_items = random.choices([2, 3, 4, 5], weights=[50, 30, 15, 5])[0]
 
     items = []
     for _ in range(num_items):
-        category = generate_category(categories)
+        category = generate_category(store, stores)
         brand = generate_brand(category, brand_groups)
         price = generate_price(category, brand, store)
         coords = generate_coords(stores)
