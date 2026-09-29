@@ -58,5 +58,5 @@ def generate_price(
     noise = noise_rng.uniform(0.95, 1.05)
 
     raw_price = base_price * brand_coef * store_coef * noise
-    return raw_price
+    return round(raw_price)
 
