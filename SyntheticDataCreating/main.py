@@ -9,7 +9,11 @@ from data.stores import stores
 MIN_ROWS = 50000
  
 if __name__ == "__main__":
-    rows = build_dataset(MIN_ROWS, stores, banks_list, banks_probability, BANKS, categories, brand_groups, CARD_LENGTH)
+    rows_count = int(input('Введите количество строк'))
+    if rows_count < MIN_ROWS: 
+        rows_count = MIN_ROWS
+        print(f"Минимальное количество строк - 50000. Создан датасет на 50000 строк")
+    rows = build_dataset(rows_count, stores, banks_list, banks_probability, BANKS, brand_groups, CARD_LENGTH)
     df = pd.DataFrame(rows)
     df.to_csv("dataset.csv", index=False)
     df.to_excel("dataset.xlsx", index=False)

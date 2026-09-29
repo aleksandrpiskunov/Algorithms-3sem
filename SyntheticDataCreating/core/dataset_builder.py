@@ -6,10 +6,10 @@ from generators.price_generator import generate_price
 from generators.receipt_generator import ReceiptRegistry
 from generators.card_generator import CardRegistry
 
-def build_receipt(stores, banks_list, banks_probability, BANKS, categories, brand_groups, CARD_LENGTH, card_registry: CardRegistry, receipt_registry: ReceiptRegistry) -> list[dict]:
+def build_receipt(stores, banks_list, banks_probability, BANKS, brand_groups, CARD_LENGTH, card_registry: CardRegistry, receipt_registry: ReceiptRegistry) -> list[dict]:
     store = generate_store(stores)
 
-    purchase_datetime = generate_datetime(stores)
+    purchase_datetime = generate_datetime(stores, store)
 
     card = card_registry.get_card(banks_list, banks_probability, BANKS, CARD_LENGTH)
     num_items = random.choices([2, 3, 4, 5], weights=[50, 30, 15, 5])[0]
@@ -19,7 +19,7 @@ def build_receipt(stores, banks_list, banks_probability, BANKS, categories, bran
         category = generate_category(store, stores)
         brand = generate_brand(category, brand_groups)
         price = generate_price(category, brand, store)
-        coords = generate_coords(stores)
+        coords = generate_coords(stores, store)
         
         items.append({
             "category": category,
@@ -48,11 +48,11 @@ def build_receipt(stores, banks_list, banks_probability, BANKS, categories, bran
     return rows
 
 
-def build_dataset(min_rows: int, stores, banks_list, banks_probability, BANKS, categories, brand_groups, CARD_LENGTH) -> list[dict]:
+def build_dataset(min_rows: int, stores, banks_list, banks_probability, BANKS, brand_groups, CARD_LENGTH) -> list[dict]:
     """Генерировать чеки, пока общее число строк не достигнет min_rows."""
     rows: list[dict] = []
     card_registry = CardRegistry()
     receipt_registry = ReceiptRegistry()
     while len(rows) < min_rows:
-        rows.extend(build_receipt(stores, banks_list, banks_probability, BANKS, categories, brand_groups, CARD_LENGTH, card_registry, receipt_registry))
+        rows.extend(build_receipt(stores, banks_list, banks_probability, BANKS, brand_groups, CARD_LENGTH, card_registry, receipt_registry))
     return rows
