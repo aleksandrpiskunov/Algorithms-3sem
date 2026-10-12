@@ -3,7 +3,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 
 from io_utils import load_dataset, save_dataset
-from anonymizer import anonymize, generalize_coords, generalize_datetime, generalize_quantity, COORD_DECIMALS
+from anonymizer import (anonymize, generalize_coords, generalize_datetime,
+                        generalize_quantity, generalize_store)
 from kanon import k_per_row, top_bad_k, unique_rows, required_k
 from metrics import kld_column, stats_compare
 
@@ -21,6 +22,7 @@ class App(tk.Tk):
 
         self.orig = None   # исходный датасет
         self.anon = None   # обезличенный датасет
+        self.info = None   # какие настройки обобщения применила программа
         self.loaded_path = None
         self.vars = {}     # столбец -> BooleanVar (чекбокс)
 
@@ -140,19 +142,36 @@ class App(tk.Tk):
 
     def run_anonymize(self):
         self.ensure_loaded()
-        self.anon = anonymize(self.orig)
+        self.anon, self.info = anonymize(self.orig)
         self.build_checks(self.anon)
-        self.show(f"Обезличено (k = {required_k(len(self.orig))} для агрегации и подавления).\n"
-                  "Столбцы изменились, проверьте чекбоксы и нажмите «рассчитать k-anonymity».\n"
-                  "Чтобы записать файл, нажмите «сохранить результат».")
+        i = self.info
+        if i["reached"]:
+            lines = [f"Обезличено, K >= {i['k']} гарантируется для любых квази-идентификаторов."]
+        else:
+            lines = [f"K >= {i['k']} НЕ достигнут: пришлось бы удалить {i['share'] * 100:.1f}% строк (больше 10%).",
+                     "Строки не удалялись, показан результат обобщения."]
+        lines += ["",
+                  "Применённые настройки:",
+                  f"  координаты: {i['coords']} зн. после запятой",
+                  f"  дата: уровень {i['date']} (M месяц, Q квартал, Y год)",
+                  f"  price и total: {i['groups']} групп",
+                  f"  магазин: {['название', 'тип магазина', 'крупная группа'][i['store']]}",
+                  f"  номер карты: {'скрыт полностью' if i['card'] == 0 else 'последние цифры: ' + str(i['card'])}",
+                  "",
+                  f"Строк: {len(self.orig)} -> {len(self.anon)} "
+                  f"(удалено {i['deleted']}, {i['deleted'] / len(self.orig) * 100:.1f}%)",
+                  "", "Нажмите «рассчитать k-anonymity» для проверки,",
+                  "«сохранить результат» чтобы записать файл."]
+        self.show("\n".join(lines))
 
     def utility(self):
         if self.anon is None:
             return messagebox.showwarning("Внимание", "Сначала обезличьте датасет")
         # приводим оригинал к тому же представлению, что и обезличенный набор
-        cmp = generalize_quantity(generalize_datetime(self.orig.copy()))
-        cmp = generalize_coords(cmp, COORD_DECIMALS)
-        cols = ["price", "total", "lat", "lon", "quantity", "date", "time_of_day"]
+        cmp = generalize_quantity(generalize_datetime(self.orig.copy(), self.info["date"]))
+        cmp = generalize_coords(cmp, self.info["coords"])
+        cmp = generalize_store(cmp, self.info["store"])
+        cols = ["store_name", "price", "total", "lat", "lon", "quantity", "date", "time_of_day"]
         lines = ["KLD по столбцам (0 = распределение не изменилось):"]
         for c in cols:
             lines.append(f"  {c:12} {kld_column(cmp[c], self.anon[c]):.4f}")
