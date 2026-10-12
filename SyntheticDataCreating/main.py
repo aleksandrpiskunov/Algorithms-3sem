@@ -11,7 +11,6 @@ MIN_ROWS = 50000
 
 
 def ask_int(prompt: str, min_value: int, max_value: int) -> int:
-    """Спрашивает число в диапазоне [min_value, max_value], пока не получит корректный ответ."""
     while True:
         try:
             value = int(input(f"{prompt} (от {min_value} до {max_value}): "))
@@ -24,7 +23,6 @@ def ask_int(prompt: str, min_value: int, max_value: int) -> int:
 
 
 def ask_bank_probabilities(count: int) -> list[float]:
-    """Спрашивает вероятности банков в формате '43.51, 22.97, 11.49, ...' (сумма = 100)."""
     prompt = (
         'Введите вероятности появления карт банков через запятую (в %, сумма = 100) '
         'в порядке ["Сбербанк", "ВТБ", "Газпромбанк", "Альфа-Банк", "Т-Банк", '

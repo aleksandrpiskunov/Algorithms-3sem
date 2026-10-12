@@ -1,7 +1,6 @@
 import random
 
 def luhn_checksum(number: str) -> int:
-    """Считает контрольную цифру по алгоритму Луна."""
     digits = [int(d) for d in number]
     for i in range(len(digits) - 1, -1, -2):
         digits[i] *= 2
