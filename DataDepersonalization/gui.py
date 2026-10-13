@@ -14,6 +14,7 @@ DIRECT_IDS = ("card_number", "receipt_number")  # по умолчанию не �
 
 
 class App(tk.Tk):
+    # Создаёт главное окно приложения и размещает в нём элементы интерфейса.
     def __init__(self):
         super().__init__()
         self.title("Обезличивание данных")
@@ -69,7 +70,7 @@ class App(tk.Tk):
         self.out_name.pack(side="left", fill="x", expand=True)
         tk.Button(out_row, text="Обзор...", command=self.pick_output).pack(side="right")
 
-    # ---------- выбор файлов ----------
+    # Открывает диалог выбора исходного файла и загружает выбранный датасет.
     def pick_input(self):
         path = filedialog.askopenfilename(
             title="Выберите исходную таблицу",
@@ -79,6 +80,7 @@ class App(tk.Tk):
             self.in_name.insert(0, path)
             self.ensure_loaded()  # сразу загружаем и показываем столбцы
 
+    # Открывает диалог выбора пути и имени файла для сохранения результата.
     def pick_output(self):
         path = filedialog.asksaveasfilename(
             title="Куда сохранить", defaultextension=".csv",
@@ -88,10 +90,12 @@ class App(tk.Tk):
             self.out_name.insert(0, path)
 
     # ---------- вспомогательное ----------
+    # Очищает область вывода и показывает в ней переданный текст.
     def show(self, text):
         self.out.delete("1.0", "end")
         self.out.insert("1.0", text)
 
+    # Создаёт чекбоксы для столбцов датасета и восстанавливает прежний выбор.
     def build_checks(self, df):
         # чекбоксы по столбцам текущего датасета, прежний выбор сохраняем
         old = {c: v.get() for c, v in self.vars.items()}
@@ -104,6 +108,7 @@ class App(tk.Tk):
                            font=("Arial", 12)).pack(anchor="w")
             self.vars[col] = var
 
+    # Загружает датасет, если путь к нему изменился или файл ещё не загружен.
     def ensure_loaded(self):
         path = self.in_name.get()
         if self.orig is None or path != self.loaded_path:
@@ -112,10 +117,12 @@ class App(tk.Tk):
             self.loaded_path = path
             self.build_checks(self.orig)
 
+    # Возвращает обезличенный датасет, если он есть, иначе исходный.
     def current(self):
         return self.anon if self.anon is not None else self.orig
 
     # ---------- команды меню ----------
+    # Формирует строки отчёта о минимальном K, плохих значениях и уникальных строках.
     def k_lines(self, df, qi, name):
         # K, вердикт, топ плохих K (с долей строк в %), уникальные строки
         k = int(k_per_row(df, qi).min())
@@ -134,6 +141,7 @@ class App(tk.Tk):
                 lines.append(f"... показаны первые 50 из {len(uniq)}")
         return lines
 
+    # Рассчитывает и показывает K-анонимность выбранного датасета.
     def calc_k(self):
         self.ensure_loaded()
         qi = [c for c, v in self.vars.items() if v.get()]
@@ -142,6 +150,7 @@ class App(tk.Tk):
         name = "обезличенный" if self.anon is not None else "исходный"
         self.show("\n".join(self.k_lines(self.current(), qi, name)))
 
+    # Запускает обезличивание, обновляет интерфейс и показывает настройки результата.
     def run_anonymize(self):
         self.ensure_loaded()
         self.anon, self.info = anonymize(self.orig)
@@ -168,6 +177,7 @@ class App(tk.Tk):
         lines += ["", "«сохранить результат» запишет файл."]
         self.show("\n".join(lines))
 
+    # Сравнивает исходный и обезличенный датасеты и показывает показатели полезности.
     def utility(self):
         if self.anon is None:
             return messagebox.showwarning("Внимание", "Сначала обезличьте датасет")
@@ -183,12 +193,14 @@ class App(tk.Tk):
         lines.append(stats_compare(self.orig, self.anon).round(2).to_string())
         self.show("\n".join(lines))
 
+    # Сохраняет обезличенный датасет на диск и возвращает путь к сохранённому файлу.
     def save_to_disk(self):
         # относительное имя -> в папку с кодом; абсолютный путь (из «Обзор») остаётся как есть
         path = os.path.join(CODE_DIR, self.out_name.get())
         save_dataset(self.anon, path)
         return path
 
+    # Проверяет наличие результата, сохраняет его и показывает уведомление об успехе.
     def save(self):
         if self.anon is None:
             return messagebox.showwarning("Внимание", "Сначала обезличьте датасет")
