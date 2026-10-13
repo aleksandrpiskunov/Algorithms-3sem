@@ -116,16 +116,10 @@ class App(tk.Tk):
         return self.anon if self.anon is not None else self.orig
 
     # ---------- команды меню ----------
-    def calc_k(self):
-        self.ensure_loaded()
-        df = self.current()
-        qi = [c for c, v in self.vars.items() if v.get()]
-        if not qi:
-            return messagebox.showwarning("Внимание", "Выберите квази-идентификаторы")
-
+    def k_lines(self, df, qi, name):
+        # K, вердикт, топ плохих K (с долей строк в %), уникальные строки
         k = int(k_per_row(df, qi).min())
         need = required_k(len(df))
-        name = "обезличенный" if self.anon is not None else "исходный"
         lines = [f"Датасет: {name}, строк: {len(df)}",
                  f"K = {k}, нужно >= {need}: {'приемлемо' if k >= need else 'НЕприемлемо'}",
                  "", "Топ плохих K (доля строк):"]
@@ -138,7 +132,15 @@ class App(tk.Tk):
             lines.append(uniq[qi].head(50).to_string())
             if len(uniq) > 50:
                 lines.append(f"... показаны первые 50 из {len(uniq)}")
-        self.show("\n".join(lines))
+        return lines
+
+    def calc_k(self):
+        self.ensure_loaded()
+        qi = [c for c, v in self.vars.items() if v.get()]
+        if not qi:
+            return messagebox.showwarning("Внимание", "Выберите квази-идентификаторы")
+        name = "обезличенный" if self.anon is not None else "исходный"
+        self.show("\n".join(self.k_lines(self.current(), qi, name)))
 
     def run_anonymize(self):
         self.ensure_loaded()
@@ -154,14 +156,16 @@ class App(tk.Tk):
                   "Применённые настройки:",
                   f"  координаты: {i['coords']} зн. после запятой",
                   f"  дата: уровень {i['date']} (M месяц, Q квартал, Y год)",
-                  f"  price и total: {i['groups']} групп",
+                  f"  price: {i['price_groups']} групп, total: {i['total_groups']} групп (внутри типа магазина)",
                   f"  магазин: {['название', 'тип магазина', 'крупная группа'][i['store']]}",
                   f"  номер карты: {'скрыт полностью' if i['card'] == 0 else 'последние цифры: ' + str(i['card'])}",
                   "",
                   f"Строк: {len(self.orig)} -> {len(self.anon)} "
                   f"(удалено {i['deleted']}, {i['deleted'] / len(self.orig) * 100:.1f}%)",
-                  "", "Нажмите «рассчитать k-anonymity» для проверки,",
-                  "«сохранить результат» чтобы записать файл."]
+                  "", "=== K-anonymity по всем столбцам (в любом случае) ===", ""]
+        # топ плохих K показываем всегда, даже если K не достигнут
+        lines += self.k_lines(self.anon, list(self.anon.columns), "обезличенный")
+        lines += ["", "«сохранить результат» запишет файл."]
         self.show("\n".join(lines))
 
     def utility(self):

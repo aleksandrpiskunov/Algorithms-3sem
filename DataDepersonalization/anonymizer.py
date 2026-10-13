@@ -2,13 +2,13 @@ import pandas as pd
 from kanon import required_k, k_per_row
 from hierarchy import STORE_GROUP, GROUP_SUPER
 
-# ===== Настройки (одно фиксированное, самое жёсткое обобщение) =====
 COORDS = 0      # знаков после запятой в координатах
 DATE = "Y"      # уровень даты: "M" месяц, "Q" квартал, "Y" год
-GROUPS = 3      # на сколько групп делить price и total
+PRICE_GROUPS = 5   # на сколько групп делить price (внутри каждого типа магазина)
+TOTAL_GROUPS = 2   # на сколько групп делить total (внутри каждого типа магазина)
 STORE = 2       # магазин: 0 - название, 1 - тип магазина, 2 - крупная группа
-CARD = 0        # сколько последних цифр карты оставлять (0 - скрыта полностью)
-DELETE_MAX = 0.10   # удаляем строки, только если их не больше 10%
+CARD = 1        # сколько последних цифр карты оставлять (0 - скрыта полностью)
+DELETE_MAX = 0.15   # удаляем строки, только если их не больше 10%
 
 
 def mask_card(df, keep):
@@ -40,19 +40,17 @@ def generalize_coords(df, decimals):
 def generalize_datetime(df, level):
     # level: "M" месяц, "Q" квартал, "Y" год
     df["date"] = df["datetime"].dt.to_period(level).astype(str)
-    df["time_of_day"] = pd.cut(df["datetime"].dt.hour, bins=[-1, 5, 11, 17, 23],
-                               labels=["ночь", "утро", "день", "вечер"])
+    df["time_of_day"] = df["datetime"].dt.hour.between(6, 17).map({True: "день", False: "вечер/ночь"})
     return df.drop(columns="datetime")
 
 
-def microaggregate(df, col, k):
-    # сортируем, режем на группы по k строк, заменяем значение средним группы
-    order = df[col].sort_values().index
-    groups = pd.Series(range(len(df)), index=order) // k
-    last = groups.max()
-    if (groups == last).sum() < k and last > 0:  # маленький хвост -> в предыдущую группу
-        groups[groups == last] = last - 1
-    df[col] = df[col].groupby(groups).transform("mean").round().astype(int)
+def microaggregate(df, col, groups, by="store_name"):
+    # внутри каждого типа магазина: сортируем, делим на `groups` групп равного размера,
+    # значение заменяем средним по группе (так разброс внутри группы меньше, чем по всему набору)
+    rank = df.groupby(by)[col].rank(method="first")
+    size = df.groupby(by)[col].transform("size")
+    part = ((rank - 1) * groups // size).astype(int)
+    df[col] = df.groupby([by, part])[col].transform("mean").round().astype(int)
     return df
 
 
@@ -61,17 +59,16 @@ def generalize_quantity(df):
     return df
 
 
-def generalize_all(df, k, coords, date, groups, store, card):
+def generalize_all(df, coords, date, price_groups, total_groups, store, card):
     # все методы обезличивания с заданной силой обобщения
-    size = max(k, len(df) // groups)
     df = df.copy()
     df = mask_card(df, card)
     df = generalize_store(df, store)
     df = drop_columns(df, ["receipt_number", "category", "brand"])
     df = generalize_coords(df, coords)
     df = generalize_datetime(df, date)
-    df = microaggregate(df, "price", size)
-    df = microaggregate(df, "total", size)
+    df = microaggregate(df, "price", price_groups)
+    df = microaggregate(df, "total", total_groups)
     df = generalize_quantity(df)
     return df
 
@@ -81,13 +78,14 @@ def anonymize(df):
     Если строк с K < нужного не больше DELETE_MAX, они удаляются, и K >= нужного по ВСЕМ столбцам
     (значит и по любому набору квази-идентификаторов). Если больше, строки не удаляем (reached=False)."""
     k = required_k(len(df))
-    g = generalize_all(df, k, COORDS, DATE, GROUPS, STORE, CARD)
+    g = generalize_all(df, COORDS, DATE, PRICE_GROUPS, TOTAL_GROUPS, STORE, CARD)
     bad = k_per_row(g, list(g.columns)) < k
     share = float(bad.mean())
 
     reached = share <= DELETE_MAX
     result = g[~bad].reset_index(drop=True) if reached else g
 
-    info = {"coords": COORDS, "date": DATE, "groups": GROUPS, "store": STORE, "card": CARD,
+    info = {"coords": COORDS, "date": DATE, "price_groups": PRICE_GROUPS, "total_groups": TOTAL_GROUPS,
+            "store": STORE, "card": CARD,
             "k": k, "reached": reached, "share": share, "deleted": len(df) - len(result)}
     return result, info
