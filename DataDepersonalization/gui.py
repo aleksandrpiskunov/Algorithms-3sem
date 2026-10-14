@@ -1,210 +1,180 @@
 import os
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, filedialog
 
+import pandas as pd
+
 from io_utils import load_dataset, save_dataset
-from anonymizer import (anonymize, generalize_coords, generalize_datetime,
-                        generalize_quantity, generalize_store)
-from kanon import k_per_row, top_bad_k, unique_rows, required_k
-from metrics import kld_column, stats_compare
+from anonymizer import anonymize, METHOD_TEXT
+from kanon import k_report
+from metrics import field_metrics, stats_compare, table_text
 
 GRAY = "#808080"
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))  # папка с кодом
-DIRECT_IDS = ("card_number", "receipt_number")  # по умолчанию не выбираем в квази-идентификаторы
 
 
 class App(tk.Tk):
-    # Создаёт главное окно приложения и размещает в нём элементы интерфейса.
     def __init__(self):
         super().__init__()
         self.title("Обезличивание данных")
-        self.geometry("950x650")
+        self.geometry("1000x720")
+        # системный моноширинный шрифт: таблицы в окне выравниваются по столбцам на любой ОС
+        self.mono = tkfont.nametofont("TkFixedFont").copy()
+        self.mono.configure(size=12)
         self.report_callback_exception = lambda *a: messagebox.showerror("Ошибка", str(a[1]))
 
         self.orig = None   # исходный датасет
         self.anon = None   # обезличенный датасет
-        self.info = None   # какие настройки обобщения применила программа
+        self.info = None   # информация об обезличивании (методы, aligned, ...)
         self.loaded_path = None
-        self.vars = {}     # столбец -> BooleanVar (чекбокс)
+        self.vars = {}     # столбец -> BooleanVar (чекбокс «обезличивать»)
 
         # панель кнопок
         bar = tk.Frame(self)
         bar.grid(row=0, column=0, columnspan=2, sticky="ew")
-        for text, cmd in [("рассчитать k-anonymity", self.calc_k),
-                          ("обезличить", self.run_anonymize),
+        for text, cmd in [("обезличить", self.run_anonymize),
+                          ("рассчитать k-anonymity", self.calc_k),
                           ("оценить полезность", self.utility),
                           ("сохранить результат", self.save),
                           ("выход", self.destroy)]:
             tk.Button(bar, text=text, command=cmd).pack(side="left", padx=2, pady=2)
 
-        # сетка: заголовки / чекбоксы + вывод / подписи файлов / поля файлов
         self.columnconfigure((0, 1), weight=1, uniform="c")
         self.rowconfigure(2, weight=1)
 
-        tk.Label(self, text="Выберите квази идентификаторы", bg=GRAY, fg="white",
-                 font=("Arial", 13), pady=8).grid(row=1, column=0, sticky="ew")
-        tk.Label(self, text="Топ плохих k anonymity", bg=GRAY, fg="white",
-                 font=("Arial", 13), pady=8).grid(row=1, column=1, sticky="ew")
+        self.label("Выберите, что обезличивать", 1, 0)
+        self.label("Топ плохих k anonymity / результаты", 1, 1)
 
         self.checks = tk.Frame(self)
         self.checks.grid(row=2, column=0, sticky="nsew", padx=5)
-        self.out = tk.Text(self, font=("Consolas", 11), wrap="none")
+        self.out = tk.Text(self, font=self.mono, wrap="none")
         self.out.grid(row=2, column=1, sticky="nsew")
 
-        tk.Label(self, text="имя файла ввода", bg=GRAY, fg="white",
-                 font=("Arial", 13), pady=8).grid(row=3, column=0, sticky="ew")
-        tk.Label(self, text="имя файла вывода", bg=GRAY, fg="white",
-                 font=("Arial", 13), pady=8).grid(row=3, column=1, sticky="ew")
-
-        # поля с путями + кнопки «Обзор»
-        in_row = tk.Frame(self)
-        in_row.grid(row=4, column=0, sticky="ew")
-        self.in_name = tk.Entry(in_row, justify="center", font=("Arial", 13))
-        self.in_name.pack(side="left", fill="x", expand=True)
-        tk.Button(in_row, text="Обзор...", command=self.pick_input).pack(side="right")
-
-        out_row = tk.Frame(self)
-        out_row.grid(row=4, column=1, sticky="ew")
-        self.out_name = tk.Entry(out_row, justify="center", font=("Arial", 13))
+        self.label("имя файла ввода (исходные данные)", 3, 0)
+        self.label("имя файла вывода", 3, 1)
+        self.in_name = self.path_row(4, 0, self.pick_input)
+        self.out_name = self.path_row(4, 1, self.pick_output)
         self.out_name.insert(0, "Depersonalization.xlsx")
-        self.out_name.pack(side="left", fill="x", expand=True)
-        tk.Button(out_row, text="Обзор...", command=self.pick_output).pack(side="right")
 
-    # Открывает диалог выбора исходного файла и загружает выбранный датасет.
-    def pick_input(self):
-        path = filedialog.askopenfilename(
-            title="Выберите исходную таблицу",
-            filetypes=[("Таблицы", "*.xlsx *.csv"), ("Все файлы", "*.*")])
-        if path:
-            self.in_name.delete(0, "end")
-            self.in_name.insert(0, path)
-            self.ensure_loaded()  # сразу загружаем и показываем столбцы
+        self.label("файл для K-anonymity (необязательно, любой датасет; пусто = текущие данные)", 5, 0, span=2)
+        self.k_name = self.path_row(6, 0, self.pick_k, span=2)
 
-    # Открывает диалог выбора пути и имени файла для сохранения результата.
-    def pick_output(self):
-        path = filedialog.asksaveasfilename(
-            title="Куда сохранить", defaultextension=".csv",
-            filetypes=[("CSV", "*.csv"), ("Excel", "*.xlsx")])
-        if path:
-            self.out_name.delete(0, "end")
-            self.out_name.insert(0, path)
+    # ---------- построение окна ----------
+    def label(self, text, row, col, span=1):
+        tk.Label(self, text=text, bg=GRAY, fg="white", font=("Arial", 13), pady=8)\
+            .grid(row=row, column=col, columnspan=span, sticky="ew")
 
-    # ---------- вспомогательное ----------
-    # Очищает область вывода и показывает в ней переданный текст.
-    def show(self, text):
-        self.out.delete("1.0", "end")
-        self.out.insert("1.0", text)
+    def path_row(self, row, col, command, span=1):
+        frame = tk.Frame(self)
+        frame.grid(row=row, column=col, columnspan=span, sticky="ew")
+        entry = tk.Entry(frame, justify="center", font=("Arial", 13))
+        entry.pack(side="left", fill="x", expand=True)
+        tk.Button(frame, text="Обзор...", command=command).pack(side="right")
+        return entry
 
-    # Создаёт чекбоксы для столбцов датасета и восстанавливает прежний выбор.
-    def build_checks(self, df):
-        # чекбоксы по столбцам текущего датасета, прежний выбор сохраняем
+    def build_checks(self, columns):
+        # чекбокс на каждый столбец исходного набора; по умолчанию обезличиваем всё
         old = {c: v.get() for c, v in self.vars.items()}
         for w in self.checks.winfo_children():
             w.destroy()
         self.vars = {}
-        for col in df.columns:
-            var = tk.BooleanVar(value=old.get(col, col not in DIRECT_IDS))
-            tk.Checkbutton(self.checks, text=col, variable=var,
-                           font=("Arial", 12)).pack(anchor="w")
+        for col in columns:
+            var = tk.BooleanVar(value=old.get(col, True))
+            tk.Checkbutton(self.checks, text=f"{col}  —  {METHOD_TEXT.get(col, 'нет метода')}",
+                           variable=var, font=("Arial", 12), wraplength=440, justify="left")\
+                .pack(anchor="w")
             self.vars[col] = var
 
-    # Загружает датасет, если путь к нему изменился или файл ещё не загружен.
+    def show(self, text):
+        self.out.delete("1.0", "end")
+        self.out.insert("1.0", text)
+
+    # ---------- выбор файлов ----------
+    def pick(self, entry, title):
+        path = filedialog.askopenfilename(title=title, filetypes=[("Таблицы", "*.xlsx *.csv"), ("Все файлы", "*.*")])
+        if path:
+            entry.delete(0, "end")
+            entry.insert(0, path)
+        return path
+
+    def pick_input(self):
+        if self.pick(self.in_name, "Выберите исходную таблицу"):
+            self.ensure_loaded()  # сразу загружаем и показываем столбцы
+
+    def pick_k(self):
+        self.pick(self.k_name, "Датасет для расчёта K-anonymity")
+
+    def pick_output(self):
+        path = filedialog.asksaveasfilename(title="Куда сохранить", defaultextension=".xlsx",
+                                            filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv")])
+        if path:
+            self.out_name.delete(0, "end")
+            self.out_name.insert(0, path)
+
     def ensure_loaded(self):
-        path = self.in_name.get()
+        path = self.in_name.get().strip()
+        if not path:
+            raise ValueError("Укажите файл ввода")
         if self.orig is None or path != self.loaded_path:
             self.orig = load_dataset(path)
-            self.anon = None
+            self.anon = self.info = None
             self.loaded_path = path
-            self.build_checks(self.orig)
+            self.build_checks(self.orig.columns)
 
-    # Возвращает обезличенный датасет, если он есть, иначе исходный.
-    def current(self):
-        return self.anon if self.anon is not None else self.orig
-
-    # ---------- команды меню ----------
-    # Формирует строки отчёта о минимальном K, плохих значениях и уникальных строках.
-    def k_lines(self, df, qi, name):
-        # K, вердикт, топ плохих K (с долей строк в %), уникальные строки
-        k = int(k_per_row(df, qi).min())
-        need = required_k(len(df))
-        lines = [f"Датасет: {name}, строк: {len(df)}",
-                 f"K = {k}, нужно >= {need}: {'приемлемо' if k >= need else 'НЕприемлемо'}",
-                 "", "Топ плохих K (доля строк):"]
-        for kv, cnt, pct in top_bad_k(df, qi):
-            lines.append(f"  {kv} ({pct:.2f}%)  строк: {cnt}")
-
-        uniq = unique_rows(df, qi)
-        lines.append(f"\nУникальных строк (K=1): {len(uniq)}")
-        if k == 1:
-            lines.append(uniq[qi].head(50).to_string())
-            if len(uniq) > 50:
-                lines.append(f"... показаны первые 50 из {len(uniq)}")
-        return lines
-
-    # Рассчитывает и показывает K-анонимность выбранного датасета.
-    def calc_k(self):
-        self.ensure_loaded()
-        qi = [c for c, v in self.vars.items() if v.get()]
-        if not qi:
-            return messagebox.showwarning("Внимание", "Выберите квази-идентификаторы")
-        name = "обезличенный" if self.anon is not None else "исходный"
-        self.show("\n".join(self.k_lines(self.current(), qi, name)))
-
-    # Запускает обезличивание, обновляет интерфейс и показывает настройки результата.
+    # ---------- кнопки ----------
     def run_anonymize(self):
         self.ensure_loaded()
-        self.anon, self.info = anonymize(self.orig)
-        self.build_checks(self.anon)
+        selected = [c for c, v in self.vars.items() if v.get()]
+        self.anon, self.info = anonymize(self.orig, selected)
         i = self.info
+
         if i["reached"]:
-            lines = [f"Обезличено, K >= {i['k']} гарантируется для любых квази-идентификаторов."]
+            lines = [f"Обезличено. K >= {i['k']} по всем полям результата."]
         else:
-            lines = [f"K >= {i['k']} НЕ достигнут: пришлось бы удалить {i['share'] * 100:.1f}% строк (больше 10%).",
-                     "Строки не удалялись, показан результат обобщения."]
-        lines += ["",
-                  "Применённые настройки:",
-                  f"  координаты: {i['coords']} зн. после запятой",
-                  f"  дата: уровень {i['date']} (M месяц, Q квартал, Y год)",
-                  f"  price: {i['price_groups']} групп, total: {i['total_groups']} групп (внутри типа магазина)",
-                  f"  магазин: {['название', 'тип магазина', 'крупная группа'][i['store']]}",
-                  f"  номер карты: {'скрыт полностью' if i['card'] == 0 else 'последние цифры: ' + str(i['card'])}",
-                  "",
-                  f"Строк: {len(self.orig)} -> {len(self.anon)} "
-                  f"(удалено {i['deleted']}, {i['deleted'] / len(self.orig) * 100:.1f}%)",
-                  "", "=== K-anonymity по всем столбцам (в любом случае) ===", ""]
-        # топ плохих K показываем всегда, даже если K не достигнут
-        lines += self.k_lines(self.anon, list(self.anon.columns), "обезличенный")
+            lines = [f"Строки не удалялись: для K >= {i['k']} пришлось бы удалить {i['share'] * 100:.1f}% (больше 10%)."]
+        lines += ["", "Методы по полям:"]
+        lines += [f"  {c}: {m}" for c, m in i["methods"].items()]
+        lines += ["", f"Строк: {len(self.orig)} -> {len(self.anon)} "
+                      f"(удалено {i['deleted']}, {i['deleted'] / len(self.orig) * 100:.1f}%)",
+                  "", "=== K-anonymity обезличенного набора (в любом случае) ===", ""]
+        lines += k_report(self.anon, "обезличенный")
         lines += ["", "«сохранить результат» запишет файл."]
         self.show("\n".join(lines))
 
-    # Сравнивает исходный и обезличенный датасеты и показывает показатели полезности.
+    def calc_k(self):
+        # K-anonymity по всем полям: любой датасет из поля «файл для K-anonymity», иначе текущие данные
+        path = self.k_name.get().strip()
+        if path:
+            df, name = load_dataset(path), os.path.basename(path)
+        elif self.anon is not None:
+            df, name = self.anon, "обезличенный (текущий)"
+        else:
+            self.ensure_loaded()
+            df, name = self.orig, "исходный (текущий)"
+        self.show("\n".join(k_report(df, name)))
+
     def utility(self):
         if self.anon is None:
             return messagebox.showwarning("Внимание", "Сначала обезличьте датасет")
-        # приводим оригинал к тому же представлению, что и обезличенный набор
-        cmp = generalize_quantity(generalize_datetime(self.orig.copy(), self.info["date"]))
-        cmp = generalize_coords(cmp, self.info["coords"])
-        cmp = generalize_store(cmp, self.info["store"])
-        cols = ["store_name", "price", "total", "lat", "lon", "quantity", "date", "time_of_day"]
-        lines = ["KLD по столбцам (0 = распределение не изменилось):"]
-        for c in cols:
-            lines.append(f"  {c:12} {kld_column(cmp[c], self.anon[c]):.4f}")
-        lines.append("\nСтатистика до / после:")
-        lines.append(stats_compare(self.orig, self.anon).round(2).to_string())
+        table = field_metrics(self.orig, self.info["aligned"], self.anon, self.info["methods"])
+        lines = ["Метрики по всем полям:", table_text(table),
+                 "",
+                 "KLD = 0: распределение не изменилось. Для обобщённых полей оригинал приводится",
+                 "к тому же виду, поэтому потерю информации там показывают «уник. до / после»."]
+        num = [c for c in self.anon.columns if c in self.orig.columns
+               and pd.api.types.is_numeric_dtype(self.anon[c]) and pd.api.types.is_numeric_dtype(self.orig[c])]
+        if num:
+            lines += ["", "Статистика числовых полей до / после:", stats_compare(self.orig, self.anon, num).round(2).to_string()]
         self.show("\n".join(lines))
 
-    # Сохраняет обезличенный датасет на диск и возвращает путь к сохранённому файлу.
-    def save_to_disk(self):
-        # относительное имя -> в папку с кодом; абсолютный путь (из «Обзор») остаётся как есть
-        path = os.path.join(CODE_DIR, self.out_name.get())
-        save_dataset(self.anon, path)
-        return path
-
-    # Проверяет наличие результата, сохраняет его и показывает уведомление об успехе.
     def save(self):
         if self.anon is None:
             return messagebox.showwarning("Внимание", "Сначала обезличьте датасет")
-        messagebox.showinfo("Готово", f"Сохранено: {self.save_to_disk()}")
+        # относительное имя -> в папку с кодом; абсолютный путь (из «Обзор») остаётся как есть
+        path = os.path.join(CODE_DIR, self.out_name.get())
+        save_dataset(self.anon, path)
+        messagebox.showinfo("Готово", f"Сохранено: {path}")
 
 
 if __name__ == "__main__":

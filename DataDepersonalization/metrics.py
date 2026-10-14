@@ -18,6 +18,7 @@ def kld_column(orig, anon, bins=20):
     Числа (price, total, lat, lon) - режем на одинаковые бины;
     всё остальное (brand, quantity, date...) - считаем частоты значений."""
     if pd.api.types.is_numeric_dtype(orig) and pd.api.types.is_numeric_dtype(anon):
+        anon = anon.dropna()  # подавленные значения (пустые) в гистограмму не берём
         edges = np.histogram_bin_edges(np.concatenate([orig, anon]), bins=bins)
         return kld(np.histogram(orig, edges)[0], np.histogram(anon, edges)[0])
     p = orig.astype(str).value_counts()
@@ -32,3 +33,36 @@ def stats_compare(orig, anon, cols=("price", "total")):
     rows = {(c, f): (getattr(orig[c], f)(), getattr(anon[c], f)())
             for c in cols for f in ("mean", "median", "std")}
     return pd.DataFrame(rows, index=["original", "anonymized"]).T
+
+
+def field_metrics(orig, aligned, anon, methods):
+    """Таблица по ВСЕМ полям исходного набора: метод, число уникальных значений до и после, KLD.
+    aligned - оригинал, приведённый к тому же виду, что и результат (кроме price/total),
+    поэтому для обобщённых полей KLD ~ 0, а потерю информации показывают уникальные значения."""
+    rows = []
+    for c in orig.columns:
+        before = orig[c].nunique()
+        if c in anon.columns:
+            outs = [c]
+        elif c == "datetime" and "date" in anon.columns:
+            outs = ["date", "time_of_day"]
+        else:
+            outs = []
+        if not outs:
+            rows.append((c, methods[c], before, "-", "-"))
+        for o in outs:
+            rows.append((o, methods[c], before, anon[o].nunique(), f"{kld_column(aligned[o], anon[o]):.4f}"))
+    return pd.DataFrame(rows, columns=["поле", "метод", "уник. до", "уник. после", "KLD"])
+
+
+def table_text(df, left=2):
+    """Таблица для моноширинного шрифта: первые `left` столбцов выровнены влево, остальные вправо,
+    все столбцы строго друг под другом (в отличие от to_string, где текст выравнивается вправо)."""
+    head = [str(c) for c in df.columns]
+    rows = [[str(v) for v in r] for r in df.itertuples(index=False)]
+    widths = [max([len(head[i])] + [len(r[i]) for r in rows]) for i in range(len(head))]
+
+    def line(cells):
+        return "  ".join(c.ljust(w) if i < left else c.rjust(w) for i, (c, w) in enumerate(zip(cells, widths)))
+
+    return "\n".join([line(head), "  ".join("-" * w for w in widths)] + [line(r) for r in rows])
